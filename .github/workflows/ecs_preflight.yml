@@ -1,0 +1,96 @@
+name: ECS Preflight
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Environment name (e.g. staging|production)"
+        required: true
+        type: string
+
+      ecs-cluster:
+        description: "ECS cluster name"
+        required: true
+        type: string
+
+      ecs-service:
+        description: "ECS service name"
+        required: true
+        type: string
+
+      aws-region:
+        description: "AWS Region"
+        required: false
+        type: string
+        default: us-east-1
+
+      max-wait:
+        description: "Max wait seconds for ECS stability"
+        required: false
+        type: number
+        default: 600
+
+      sleep-interval:
+        description: "Seconds between ECS polls"
+        required: false
+        type: number
+        default: 30
+
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+
+jobs:
+  preflight:
+    name: ECS Stability Check (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Wait for ECS service to become stable
+        shell: bash
+        run: |
+          MAX_WAIT_SECONDS=${{ inputs.max-wait }}
+          SLEEP_SECONDS=${{ inputs.sleep-interval }}
+          ELAPSED=0
+
+          while true; do
+            STATUS=$(aws ecs describe-services \
+              --cluster "${{ inputs.ecs-cluster }}" \
+              --services "${{ inputs.ecs-service }}" \
+              --query 'services[0].deployments' \
+              --output json)
+
+            DEPLOYMENT_COUNT=$(echo "$STATUS" | jq length)
+
+            if [ "$DEPLOYMENT_COUNT" -eq 1 ]; then
+              ROLLOUT_STATE=$(aws ecs describe-services \
+                --cluster "${{ inputs.ecs-cluster }}" \
+                --services "${{ inputs.ecs-service }}" \
+                --query 'services[0].deployments[0].rolloutState' \
+                --output text)
+
+              if [ "$ROLLOUT_STATE" = "COMPLETED" ]; then
+                echo "Service is stable"
+                exit 0
+              fi
+            fi
+
+            if [ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]; then
+              echo "Exceeded max wait time"
+              exit 1
+            fi
+
+            sleep "$SLEEP_SECONDS"
+            ELAPSED=$((ELAPSED + SLEEP_SECONDS))
+          done
