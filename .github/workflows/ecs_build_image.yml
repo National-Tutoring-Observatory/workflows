@@ -31,6 +31,10 @@ on:
         required: true
         type: string
 
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+
 permissions:
   id-token: write
   contents: read
