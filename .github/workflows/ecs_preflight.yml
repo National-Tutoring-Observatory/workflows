@@ -4,22 +4,12 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: "Environment name (e.g. staging|production)"
-        required: true
-        type: string
-
-      ecs-cluster:
-        description: "ECS cluster name"
-        required: true
-        type: string
-
-      ecs-service:
-        description: "ECS service name"
+        description: "GitHub environment name (e.g. staging|production)"
         required: true
         type: string
 
       aws-region:
-        description: "AWS Region"
+        description: "AWS region"
         required: false
         type: string
         default: us-east-1
@@ -64,14 +54,24 @@ jobs:
       - name: Wait for ECS service to become stable
         shell: bash
         run: |
+          set -euo pipefail
+
           MAX_WAIT_SECONDS=${{ inputs.max-wait }}
           SLEEP_SECONDS=${{ inputs.sleep-interval }}
           ELAPSED=0
 
+          # Fail fast if environment vars are missing
+          test -n "${{ vars.ECS_CLUSTER }}" || { echo "ECS_CLUSTER is not set"; exit 1; }
+          test -n "${{ vars.ECS_SERVICE }}" || { echo "ECS_SERVICE is not set"; exit 1; }
+
+          echo "Waiting for ECS service to stabilise"
+          echo "Cluster: ${{ vars.ECS_CLUSTER }}"
+          echo "Service: ${{ vars.ECS_SERVICE }}"
+
           while true; do
             STATUS=$(aws ecs describe-services \
-              --cluster "${{ inputs.ecs-cluster }}" \
-              --services "${{ inputs.ecs-service }}" \
+              --cluster "${{ vars.ECS_CLUSTER }}" \
+              --services "${{ vars.ECS_SERVICE }}" \
               --query 'services[0].deployments' \
               --output json)
 
@@ -79,8 +79,8 @@ jobs:
 
             if [ "$DEPLOYMENT_COUNT" -eq 1 ]; then
               ROLLOUT_STATE=$(aws ecs describe-services \
-                --cluster "${{ inputs.ecs-cluster }}" \
-                --services "${{ inputs.ecs-service }}" \
+                --cluster "${{ vars.ECS_CLUSTER }}" \
+                --services "${{ vars.ECS_SERVICE }}" \
                 --query 'services[0].deployments[0].rolloutState' \
                 --output text)
 
@@ -91,7 +91,7 @@ jobs:
             fi
 
             if [ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]; then
-              echo "Exceeded max wait time"
+              echo "Exceeded max wait time (${MAX_WAIT_SECONDS}s)"
               exit 1
             fi
 
