@@ -28,8 +28,8 @@ This repository solves that by extracting common jobs into **reusable workflows*
 |--------|------|-------------|
 | ECS preflight   | [`ecs_preflight.yml`](.github/workflows/ecs_preflight.yml) | Waits for an ECS service to reach a stable state before continuing a deployment. Ensures no in-progress or failed rollouts are active. |
 | ECS Build Image | [`ecs_build_image.yml`](.github/workflows/ecs_build_image.yml) | Builds and pushes a container image to AWS ECR. |
-
-> Additional workflows will be added incrementally as existing pipelines are refactored.
+| ECS Deploy Service| [`ecs_deploy_service.yml`](.github/workflows/ecs_deploy_service.yml) | Deploys updates to an ECS service. |
+| Deployment Summary| [`deployment_summary.yml`](.github/workflows/deployment_summary.yml) | Outputs a formatted workflow summary. To be used as a final job in a calling workflow.. |
 
 ---
 
