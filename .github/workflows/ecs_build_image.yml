@@ -35,6 +35,11 @@ on:
       AWS_ROLE_ARN:
         required: true
 
+    outputs:
+      image:
+        description: "Fully qualified image URI"
+        value: ${{ jobs.build.outputs.image }}
+
 permissions:
   id-token: write
   contents: read
