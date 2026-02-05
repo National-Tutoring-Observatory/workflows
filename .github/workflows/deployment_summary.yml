@@ -1,0 +1,129 @@
+name: Deployment Summary
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Environment name (e.g. staging)"
+        required: true
+        type: string
+
+      web-image:
+        description: "Deployed web image"
+        required: true
+        type: string
+
+      worker-image:
+        description: "Deployed worker image"
+        required: true
+        type: string
+
+      app-url:
+        description: "Application URL"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+
+jobs:
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    if: success() || failure()
+
+    steps:
+      - name: Generate deployment summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          WEB_IMAGE: ${{ inputs.web-image }}
+          WORKER_IMAGE: ${{ inputs.worker-image }}
+          ENV_NAME: ${{ inputs.environment }}
+          APP_URL: ${{ inputs.app-url }}
+        run: |
+          set -euo pipefail
+
+          RUN_JSON=$(gh api "repos/$REPO/actions/runs/$RUN_ID")
+          JOBS_JSON=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs")
+
+          # --- Total duration ---
+          RUN_STARTED=$(echo "$RUN_JSON" | jq -r '.run_started_at // .created_at')
+          RUN_ENDED=$(echo "$RUN_JSON" | jq -r '.updated_at // .run_completed_at // .completed_at')
+
+          START_EPOCH=$(date -d "$RUN_STARTED" +%s)
+          END_EPOCH=$(date -d "$RUN_ENDED" +%s)
+
+          TOTAL_SECONDS=$((END_EPOCH - START_EPOCH))
+          TOTAL_MIN=$((TOTAL_SECONDS / 60))
+          TOTAL_SEC=$((TOTAL_SECONDS % 60))
+
+          {
+            echo "## 🚀 ${ENV_NAME^} Deployment Complete"
+            echo
+            echo "**Environment:** ${ENV_NAME^}  "
+            echo "**Status:** ✅ Healthy  "
+            echo "**Total Duration:** ⏱️ **${TOTAL_MIN}m ${TOTAL_SEC}s**"
+            echo
+            echo "### 📦 Deployed Containers"
+            echo "- **Web:** \`${WEB_IMAGE}\`"
+            echo "- **Worker:** \`${WORKER_IMAGE}\`"
+            echo
+            echo "### 🔗 Application"
+            echo "- 🌐 **Web App:** ${APP_URL}"
+            echo
+            echo "### 🧾 Source"
+            echo "- **Branch:** \`${{ github.ref_name }}\`"
+            echo "- **Commit:** \`${{ github.sha }}\`"
+            echo
+            echo "### ⏱️ Job Timings"
+            echo
+            echo "| Job | Duration |"
+            echo "|-----|----------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          mapfile -t JOB_ROWS < <(
+            echo "$JOBS_JSON" | jq -r '
+              .jobs[]
+              | select(.started_at != null and .completed_at != null)
+              | [.name, .started_at, .completed_at]
+              | @tsv
+            '
+          )
+
+          SLOWEST_SECONDS=0
+          SLOWEST_NAME=""
+
+          for ROW in "${JOB_ROWS[@]}"; do
+            IFS=$'\t' read -r NAME START END <<< "$ROW"
+            START_EPOCH=$(date -d "$START" +%s)
+            END_EPOCH=$(date -d "$END" +%s)
+            DURATION=$((END_EPOCH - START_EPOCH))
+
+            if [ "$DURATION" -gt "$SLOWEST_SECONDS" ]; then
+              SLOWEST_SECONDS="$DURATION"
+              SLOWEST_NAME="$NAME"
+            fi
+          done
+
+          for ROW in "${JOB_ROWS[@]}"; do
+            IFS=$'\t' read -r NAME START END <<< "$ROW"
+            START_EPOCH=$(date -d "$START" +%s)
+            END_EPOCH=$(date -d "$END" +%s)
+            DURATION=$((END_EPOCH - START_EPOCH))
+
+            MIN=$((DURATION / 60))
+            SEC=$((DURATION % 60))
+
+            if [ "$NAME" = "$SLOWEST_NAME" ]; then
+              echo "| **$NAME** | **${MIN}m ${SEC}s** |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $NAME | ${MIN}m ${SEC}s |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+          {
+            echo
+            echo "_**Bolded row indicates the slowest completed job (critical path).**_"
+          } >> "$GITHUB_STEP_SUMMARY"
