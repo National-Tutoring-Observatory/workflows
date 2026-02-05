@@ -1,0 +1,131 @@
+name: ECS Deploy Service
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+      aws-region:
+        required: false
+        type: string
+        default: us-east-1
+
+      image:
+        required: true
+        type: string
+
+      service:
+        description: "web | worker"
+        required: true
+        type: string
+
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    env:
+      AWS_REGION: ${{ inputs.aws-region }}
+      IMAGE: ${{ inputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy service
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          case "${{ inputs.service }}" in
+            web)
+              suffix=""
+              ;;
+            worker)
+              suffix="_WORKER"
+              ;;
+            *)
+              echo "Unknown service: ${{ inputs.service }}"
+              exit 1
+              ;;
+          esac
+
+          cluster=$(printenv "ECS${suffix}_CLUSTER")
+          service=$(printenv "ECS${suffix}_SERVICE")
+          container=$(printenv "ECS${suffix}_CONTAINER_NAME")
+          image="$IMAGE"
+
+          test -n "$cluster"
+          test -n "$service"
+          test -n "$container"
+          test -n "$image"
+
+          rollback() {
+            echo "⚠️ Rolling back service"
+            aws ecs update-service \
+              --cluster "$cluster" \
+              --service "$service" \
+              --task-definition "$OLD_TD_ARN"
+
+            aws ecs wait services-stable \
+              --cluster "$cluster" \
+              --services "$service"
+          }
+
+          trap rollback ERR
+
+          OLD_TD_ARN=$(aws ecs describe-services \
+            --cluster "$cluster" \
+            --services "$service" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          aws ecs describe-task-definition \
+            --task-definition "$OLD_TD_ARN" \
+            --query taskDefinition > td.json
+
+          jq --arg img "$image" --arg name "$container" '
+            .containerDefinitions |= map(
+              if .name == $name then .image = $img else . end
+            )
+            | del(
+                .revision,
+                .status,
+                .taskDefinitionArn,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+          ' td.json > td-register.json
+
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://td-register.json \
+            --query taskDefinition.taskDefinitionArn \
+            --output text)
+
+          aws ecs update-service \
+            --cluster "$cluster" \
+            --service "$service" \
+            --task-definition "$NEW_TD_ARN"
+
+          aws ecs wait services-stable \
+            --cluster "$cluster" \
+            --services "$service"
+
+          trap - ERR
+          echo "✅ Service deployed"
