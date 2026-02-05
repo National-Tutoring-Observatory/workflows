@@ -4,20 +4,23 @@ on:
   workflow_call:
     inputs:
       environment:
+        description: "GitHub environment name"
         required: true
         type: string
 
       aws-region:
+        description: "AWS region"
         required: false
         type: string
         default: us-east-1
 
       image:
+        description: "Full container image URI"
         required: true
         type: string
 
       service:
-        description: "web | worker"
+        description: "Service to deploy: web | worker"
         required: true
         type: string
 
@@ -31,6 +34,7 @@ permissions:
 
 jobs:
   deploy:
+    name: Deploy ECS Service
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
 
@@ -51,31 +55,46 @@ jobs:
         run: |
           set -Eeuo pipefail
 
+          # --------------------------------------------------
+          # Resolve environment-specific ECS config
+          # --------------------------------------------------
+
           case "${{ inputs.service }}" in
             web)
-              suffix=""
+              cluster="${{ vars.ECS_CLUSTER }}"
+              service="${{ vars.ECS_SERVICE }}"
+              container="${{ vars.ECS_CONTAINER_NAME }}"
               ;;
             worker)
-              suffix="_WORKER"
+              cluster="${{ vars.ECS_WORKER_CLUSTER }}"
+              service="${{ vars.ECS_WORKER_SERVICE }}"
+              container="${{ vars.ECS_WORKER_CONTAINER_NAME }}"
               ;;
             *)
-              echo "Unknown service: ${{ inputs.service }}"
+              echo "❌ Unknown service: ${{ inputs.service }}"
               exit 1
               ;;
           esac
 
-          cluster=$(printenv "ECS${suffix}_CLUSTER")
-          service=$(printenv "ECS${suffix}_SERVICE")
-          container=$(printenv "ECS${suffix}_CONTAINER_NAME")
           image="$IMAGE"
 
-          test -n "$cluster"
-          test -n "$service"
-          test -n "$container"
-          test -n "$image"
+          test -n "$cluster" || { echo "ECS cluster missing"; exit 1; }
+          test -n "$service" || { echo "ECS service missing"; exit 1; }
+          test -n "$container" || { echo "Container name missing"; exit 1; }
+          test -n "$image" || { echo "Image missing"; exit 1; }
+
+          echo "Deploying $image"
+          echo "Cluster: $cluster"
+          echo "Service: $service"
+          echo "Container: $container"
+
+          # --------------------------------------------------
+          # Rollback handler
+          # --------------------------------------------------
 
           rollback() {
             echo "⚠️ Rolling back service"
+
             aws ecs update-service \
               --cluster "$cluster" \
               --service "$service" \
@@ -88,6 +107,10 @@ jobs:
 
           trap rollback ERR
 
+          # --------------------------------------------------
+          # Fetch current task definition
+          # --------------------------------------------------
+
           OLD_TD_ARN=$(aws ecs describe-services \
             --cluster "$cluster" \
             --services "$service" \
@@ -97,6 +120,10 @@ jobs:
           aws ecs describe-task-definition \
             --task-definition "$OLD_TD_ARN" \
             --query taskDefinition > td.json
+
+          # --------------------------------------------------
+          # Update container image
+          # --------------------------------------------------
 
           jq --arg img "$image" --arg name "$container" '
             .containerDefinitions |= map(
@@ -113,10 +140,18 @@ jobs:
               )
           ' td.json > td-register.json
 
+          # --------------------------------------------------
+          # Register new task definition
+          # --------------------------------------------------
+
           NEW_TD_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://td-register.json \
             --query taskDefinition.taskDefinitionArn \
             --output text)
+
+          # --------------------------------------------------
+          # Update service
+          # --------------------------------------------------
 
           aws ecs update-service \
             --cluster "$cluster" \
