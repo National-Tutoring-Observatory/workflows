@@ -31,6 +31,11 @@ on:
         required: true
         type: string
 
+      tag:
+        description: "Optional image tag (defaults to short commit SHA)"
+        required: false
+        type: string
+
     secrets:
       AWS_ROLE_ARN:
         required: true
@@ -68,10 +73,19 @@ jobs:
 
       - name: Derive image tag
         id: tag
-        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push image
         id: image
+        shell: bash
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
