@@ -1,0 +1,61 @@
+name: Resolve Release
+
+on:
+  workflow_call:
+    inputs:
+      base-branch:
+        description: "Branch the tagged commit must belong to"
+        required: false
+        type: string
+        default: main
+
+    outputs:
+      version:
+        description: "Release version (without leading v)"
+        value: ${{ jobs.resolve.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid tag format: $TAG"
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm tagged commit is on base branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRANCH="${{ inputs.base-branch }}"
+          COMMIT=$(git rev-list -n 1 "$GITHUB_REF_NAME")
+
+          git fetch origin "$BRANCH" --depth=1
+
+          if ! git branch --remotes --contains "$COMMIT" | grep -q "origin/$BRANCH"; then
+            echo "❌ Tag commit is not on $BRANCH"
+            exit 1
+          fi
