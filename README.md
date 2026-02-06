@@ -26,6 +26,7 @@ This repository solves that by extracting common jobs into **reusable workflows*
 
 | Workflow | File | Description |
 |--------|------|-------------|
+| Resolve Release   | [`resolve_release.yml`](.github/workflows/resolve_release.yml) | Validates semantic version tags and ensures release commits originate from the main branch, providing a centralized enforcement point for release policy.|
 | ECS preflight   | [`ecs_preflight.yml`](.github/workflows/ecs_preflight.yml) | Waits for an ECS service to reach a stable state before continuing a deployment. Ensures no in-progress or failed rollouts are active. |
 | ECS Build Image | [`ecs_build_image.yml`](.github/workflows/ecs_build_image.yml) | Builds and pushes a container image to AWS ECR. |
 | ECS Deploy Service| [`ecs_deploy_service.yml`](.github/workflows/ecs_deploy_service.yml) | Deploys updates to an ECS service. |
