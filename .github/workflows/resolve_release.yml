@@ -1,5 +1,15 @@
 name: Resolve Release
 
+# Validates the release tag and extracts a version string for downstream
+# jobs. Enforces two invariants:
+#   1. Tag matches the strict semver shape: vX.Y.Z (digits only)
+#   2. The tagged commit exists on the base branch
+#
+# The previous version of this workflow accepted a `-hotfix` suffix that
+# skipped the base-branch check. That path has been removed: hotfix
+# releases now run through their own dedicated workflow which builds
+# from an arbitrary target branch.
+
 on:
   workflow_call:
     inputs:
@@ -23,7 +33,6 @@ jobs:
 
     outputs:
       version: ${{ steps.version.outputs.version }}
-      skip-base-check: ${{ steps.version.outputs.skip-base-check }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,24 +47,16 @@ jobs:
 
           TAG="${GITHUB_REF_NAME}"
 
-          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            VERSION="${TAG#v}"
-            SKIP="false"
-          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-hotfix$ ]]; then
-            VERSION="${TAG#v}"
-            SKIP="true"
-            echo "⚠️  Hotfix release: skipping base branch check"
-          else
-            echo "❌ Invalid tag format: $TAG"
-            echo "   Expected vX.Y.Z or vX.Y.Z-hotfix"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid tag format: $TAG"
+            echo "::error::Expected vX.Y.Z (digits only). Hotfix releases use the hotfix workflow."
             exit 1
           fi
 
+          VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "skip-base-check=$SKIP" >> "$GITHUB_OUTPUT"
 
       - name: Confirm tagged commit is on base branch
-        if: steps.version.outputs.skip-base-check != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -66,6 +67,8 @@ jobs:
           git fetch origin "$BRANCH" --depth=1
 
           if ! git branch --remotes --contains "$COMMIT" | grep -q "origin/$BRANCH"; then
-            echo "❌ Tag commit is not on $BRANCH"
+            echo "::error::Tag commit $COMMIT is not on $BRANCH."
+            echo "::error::Releases must be tagged from $BRANCH. If this is an out-of-band fix,"
+            echo "::error::use the hotfix workflow instead."
             exit 1
           fi
