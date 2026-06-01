@@ -23,6 +23,9 @@ on:
       version:
         description: "Release version (without leading v)"
         value: ${{ jobs.resolve.outputs.version }}
+      sha:
+        description: "Full commit SHA the tag resolves to. release.yml passes this to inspect_staging as tag-commit-sha; inspect_staging truncates it to the 7-char short SHA that staging tags images with."
+        value: ${{ jobs.resolve.outputs.sha }}
 
 permissions:
   contents: read
@@ -33,6 +36,7 @@ jobs:
 
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.base-branch.outputs.sha }}
 
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +61,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Confirm tagged commit is on base branch
+        id: base-branch
         shell: bash
         run: |
           set -euo pipefail
@@ -72,3 +77,8 @@ jobs:
             echo "::error::use the hotfix workflow instead."
             exit 1
           fi
+
+          # Export the validated commit SHA so release.yml can pass it through
+          # to inspect_staging as tag-commit-sha. Emitted full-length; the
+          # consumer truncates to the 7-char short SHA staging tags with.
+          echo "sha=$COMMIT" >> "$GITHUB_OUTPUT"
