@@ -63,10 +63,12 @@ jobs:
       - name: Confirm tagged commit is on base branch
         id: base-branch
         shell: bash
+        env:
+          BASE_BRANCH: ${{ inputs.base-branch }}
         run: |
           set -euo pipefail
 
-          BRANCH="${{ inputs.base-branch }}"
+          BRANCH="$BASE_BRANCH"
           COMMIT=$(git rev-list -n 1 "$GITHUB_REF_NAME")
 
           git fetch origin "$BRANCH" --depth=1
