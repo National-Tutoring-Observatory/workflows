@@ -53,11 +53,12 @@ jobs:
 
       - name: Wait for ECS service to become stable
         shell: bash
+        env:
+          MAX_WAIT_SECONDS: ${{ inputs.max-wait }}
+          SLEEP_SECONDS: ${{ inputs.sleep-interval }}
         run: |
           set -euo pipefail
 
-          MAX_WAIT_SECONDS=${{ inputs.max-wait }}
-          SLEEP_SECONDS=${{ inputs.sleep-interval }}
           ELAPSED=0
 
           # Fail fast if environment vars are missing
